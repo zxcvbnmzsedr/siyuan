@@ -20,12 +20,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/qiniu/go-sdk/v7/auth/qbox"
+	"github.com/siyuan-note/siyuan/kernel/filesys"
 	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +35,13 @@ import (
 	"github.com/panjf2000/ants/v2"
 	"github.com/qiniu/go-sdk/v7/storage"
 	"github.com/siyuan-note/siyuan/kernel/util"
+)
+
+const (
+	QINIU_AK     = "ORXHmZqiePzGoyWaZb5oETVMejbyjRCEl3wsYKrP"
+	QINIU_SK     = "SCsSsYmhRIgC5_Z-qkEvzl4EfFfBU6tnCjw-Jho2"
+	QINIU_BUCKET = "siyuan-backup"
+	QINIU_DOMAIN = "http://rcsksriz5.hn-bkt.clouddn.com/"
 )
 
 func getCloudSpaceOSS() (sync, backup map[string]interface{}, assetSize int64, err error) {
@@ -460,83 +468,38 @@ func ossUpload0(localDirPath, cloudDirPath, localUpsert string, wroteFiles *int,
 }
 
 func getOssUploadToken(filename, cloudDirPath string, length int64) (ret string, err error) {
-	// 因为需要指定 key，所以每次上传文件都必须在云端生成 Token，否则有安全隐患
-
-	var result map[string]interface{}
-	req := util.NewCloudRequest(Conf.System.NetworkProxy.String()).
-		SetResult(&result)
-	req.SetBody(map[string]interface{}{
-		"token":   Conf.User.UserToken,
-		"dirPath": cloudDirPath,
-		"name":    filename,
-		"length":  length})
-	resp, err := req.Post(util.LocalServer + "/apis/siyuan/data/getSiYuanFileUploadToken?uid=" + Conf.User.UserId)
-	if nil != err {
-		util.LogErrorf("get file [%s] upload token failed: %+v", filename, err)
-		err = errors.New(fmt.Sprintf(Conf.Language(94), err))
-		return
+	mac := qbox.NewMac(QINIU_AK, QINIU_SK)
+	putPolicy := storage.PutPolicy{
+		Scope: fmt.Sprintf("%s:%s", QINIU_BUCKET, filename),
 	}
-
-	if 200 != resp.StatusCode {
-		if 401 == resp.StatusCode {
-			err = errors.New(fmt.Sprintf(Conf.Language(94), Conf.Language(31)))
-			return
-		}
-		util.LogErrorf("get file [%s] upload token failed [sc=%d]", filename, resp.StatusCode)
-		err = errors.New(fmt.Sprintf(Conf.Language(94), strconv.Itoa(resp.StatusCode)))
-		return
-	}
-
-	code := result["code"].(float64)
-	if 0 != code {
-		msg := result["msg"].(string)
-		util.LogErrorf("download cloud file failed: %s", msg)
-		err = errors.New(fmt.Sprintf(Conf.Language(93), msg))
-		return
-	}
-
-	resultData := result["data"].(map[string]interface{})
-	ret = resultData["token"].(string)
+	ret = putPolicy.UploadToken(mac)
 	return
 }
 
 func getCloudSyncVer(cloudDir string) (cloudSyncVer int64, err error) {
-	start := time.Now()
-	result := map[string]interface{}{}
-	request := util.NewCloudRequest(Conf.System.NetworkProxy.String())
-	resp, err := request.
-		SetResult(&result).
-		SetBody(map[string]string{"syncDir": cloudDir, "token": Conf.User.UserToken}).
-		Post(util.LocalServer + "/apis/siyuan/data/getSiYuanWorkspaceSyncVer?uid=" + Conf.User.UserId)
+	mac := qbox.NewMac(QINIU_AK, QINIU_SK)
+	key := path.Join("siyuan", Conf.User.UserId, "sync", cloudDir, ".siyuan", "conf.json")
+	deadline := time.Now().Add(time.Second * 3600).Unix() //1小时有效期
+	downloadURL := storage.MakePrivateURL(mac, QINIU_DOMAIN, key, deadline)
+
+	resp, err := util.NewCloudFileRequest15s(Conf.System.NetworkProxy.String()).Get(downloadURL)
 	if nil != err {
-		util.LogErrorf("get cloud sync ver failed: %s", err)
-		err = ErrFailedToConnectCloudServer
+		util.LogErrorf("download request [%s] failed: %s", downloadURL, err)
 		return
 	}
 	if 200 != resp.StatusCode {
-		if 401 == resp.StatusCode {
-			err = errors.New(Conf.Language(31))
-			return
-		}
-		util.LogErrorf("get cloud sync ver failed: %d", resp.StatusCode)
-		err = ErrFailedToConnectCloudServer
+		util.LogErrorf("download request [%s] status code [%d]", downloadURL, resp.StatusCode)
+		err = errors.New(fmt.Sprintf("download file list failed [%d]", resp.StatusCode))
 		return
 	}
-
-	code := result["code"].(float64)
-	if 0 != code {
-		msg := result["msg"].(string)
-		util.LogErrorf("get cloud sync ver failed: %s", msg)
-		err = errors.New(msg)
+	conf := &filesys.DataConf{}
+	data, err := resp.ToBytes()
+	if err = gulu.JSON.UnmarshalJSON(data, &conf); nil != err {
+		util.LogErrorf("unmarshal index failed: %s", err)
+		err = errors.New(fmt.Sprintf("unmarshal index failed"))
 		return
 	}
-
-	data := result["data"].(map[string]interface{})
-	cloudSyncVer = int64(data["v"].(float64))
-
-	if elapsed := time.Now().Sub(start).Milliseconds(); 2000 < elapsed {
-		util.LogInfof("get cloud sync ver elapsed [%dms]", elapsed)
-	}
+	cloudSyncVer = conf.SyncVer
 	return
 }
 
@@ -602,33 +565,12 @@ func getLocalFileListOSS(dirPath string) (ret map[string]*CloudIndex, err error)
 }
 
 func getCloudFileListOSS(cloudDirPath string) (ret map[string]*CloudIndex, err error) {
-	result := map[string]interface{}{}
-	request := util.NewCloudRequest(Conf.System.NetworkProxy.String())
-	resp, err := request.
-		SetResult(&result).
-		SetBody(map[string]string{"dirPath": cloudDirPath, "token": Conf.User.UserToken}).
-		Post(util.LocalServer + "/apis/siyuan/data/getSiYuanFileListURL?uid=" + Conf.User.UserId)
-	if nil != err {
-		util.LogErrorf("get cloud file list failed: %s", err)
-		err = ErrFailedToConnectCloudServer
-		return
-	}
+	mac := qbox.NewMac(QINIU_AK, QINIU_SK)
+	key := path.Join("siyuan", Conf.User.UserId, cloudDirPath, "index.json")
+	deadline := time.Now().Add(time.Second * 3600).Unix() //1小时有效期
+	downloadURL := storage.MakePrivateURL(mac, QINIU_DOMAIN, key, deadline)
 
-	if 401 == resp.StatusCode {
-		err = errors.New(Conf.Language(31))
-		return
-	}
-
-	code := result["code"].(float64)
-	if 0 != code {
-		util.LogErrorf("get cloud file list failed: %s", result["msg"])
-		err = ErrFailedToConnectCloudServer
-		return
-	}
-
-	retData := result["data"].(map[string]interface{})
-	downloadURL := retData["url"].(string)
-	resp, err = util.NewCloudFileRequest15s(Conf.System.NetworkProxy.String()).Get(downloadURL)
+	resp, err := util.NewCloudFileRequest15s(Conf.System.NetworkProxy.String()).Get(downloadURL)
 	if nil != err {
 		util.LogErrorf("download request [%s] failed: %s", downloadURL, err)
 		return
@@ -758,11 +700,12 @@ func cloudUpsertRemoveListOSS(localDirPath string, cloudFileList map[string]*Clo
 func putFileToCloud(filePath, key, upToken string) (err error) {
 	formUploader := storage.NewFormUploader(&storage.Config{UseHTTPS: true})
 	ret := storage.PutRet{}
-	err = formUploader.PutFile(context.Background(), &ret, upToken, key, filePath, nil)
+	upToken2, err := getOssUploadToken(key, key, 0)
+	err = formUploader.PutFile(context.Background(), &ret, upToken2, key, filePath, nil)
 	if nil != err {
 		util.LogWarnf("put file [%s] to cloud failed [%s], retry it after 3s", filePath, err)
 		time.Sleep(3 * time.Second)
-		err = formUploader.PutFile(context.Background(), &ret, upToken, key, filePath, nil)
+		err = formUploader.PutFile(context.Background(), &ret, upToken2, key, filePath, nil)
 		if nil != err {
 			return
 		}
