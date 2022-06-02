@@ -17,11 +17,7 @@ import (
 )
 
 const (
-	QiniuAk     = ""
-	QiniuSk     = ""
-	QiniuBucket = "siyuan-backup"
-	QiniuDomain = ""
-	QiniuBase   = "siyuan"
+	QiniuBase = "siyuan"
 )
 
 func getOssUploadToken(c *gin.Context) {
@@ -35,12 +31,11 @@ func getOssUploadToken(c *gin.Context) {
 	uid := c.Query("uid")
 	filename := arg["name"].(string)
 	dirPath := arg["dirPath"].(string)
-	mac := qbox.NewMac(QiniuAk, QiniuSk)
 	key := filepath.Join(QiniuBase, uid, dirPath, filename)
 	putPolicy := storage.PutPolicy{
-		Scope: fmt.Sprintf("%s:%s", QiniuBucket, key),
+		Scope: fmt.Sprintf("%s:%s", model.Conf.Sync.QiniuSync.Bucket, key),
 	}
-	token := putPolicy.UploadToken(mac)
+	token := putPolicy.UploadToken(_getMac())
 	ret.Data = map[string]interface{}{
 		"token": token,
 	}
@@ -84,10 +79,9 @@ func getCloudFileListOSS(c *gin.Context) {
 	uid := c.Query("uid")
 	cloudDirPath := arg["dirPath"].(string)
 
-	mac := qbox.NewMac(QiniuAk, QiniuSk)
 	key := path.Join(QiniuBase, uid, cloudDirPath, "index.json")
 	deadline := time.Now().Add(time.Second * 3600).Unix() //1小时有效期
-	downloadURL := storage.MakePrivateURL(mac, QiniuDomain, key, deadline)
+	downloadURL := storage.MakePrivateURL(_getMac(), model.Conf.Sync.QiniuSync.Domain, key, deadline)
 	ret.Data = map[string]interface{}{
 		"url": downloadURL,
 	}
@@ -201,11 +195,10 @@ func getSiYuanFile(c *gin.Context) {
 	cloudDirPath := arg["path"].(string)
 
 	uid := model.Conf.User.UserId
-	mac := qbox.NewMac(QiniuAk, QiniuSk)
 	key := path.Join(QiniuBase, uid, cloudDirPath)
 
 	deadline := time.Now().Add(time.Second * 3600).Unix() //1小时有效期
-	downloadURL := storage.MakePrivateURL(mac, QiniuDomain, key, deadline)
+	downloadURL := storage.MakePrivateURL(_getMac(), model.Conf.Sync.QiniuSync.Domain, key, deadline)
 	ret.Data = map[string]interface{}{
 		"url": downloadURL,
 	}
@@ -213,11 +206,10 @@ func getSiYuanFile(c *gin.Context) {
 
 func getCloudFileContent(elem ...string) (storage.FileInfo, []byte, error) {
 	uid := model.Conf.User.UserId
-	mac := qbox.NewMac(QiniuAk, QiniuSk)
 	key := path.Join(QiniuBase, uid, filepath.Join(elem...))
 
 	deadline := time.Now().Add(time.Second * 3600).Unix() //1小时有效期
-	downloadURL := storage.MakePrivateURL(mac, QiniuDomain, key, deadline)
+	downloadURL := storage.MakePrivateURL(_getMac(), model.Conf.Sync.QiniuSync.Domain, key, deadline)
 
 	resp, err := util.NewCloudFileRequest15s(model.Conf.System.NetworkProxy.String()).Get(downloadURL)
 	if nil != err {
@@ -232,12 +224,15 @@ func getCloudFileContent(elem ...string) (storage.FileInfo, []byte, error) {
 		err = errors.New(fmt.Sprintf("download file list failed [%d]", resp.StatusCode))
 	}
 	cfg := storage.Config{}
-	bucketManager := storage.NewBucketManager(mac, &cfg)
-	fileInfo, sErr := bucketManager.Stat(QiniuBucket, key)
+	bucketManager := storage.NewBucketManager(_getMac(), &cfg)
+	fileInfo, sErr := bucketManager.Stat(model.Conf.Sync.QiniuSync.Bucket, key)
 	if sErr != nil {
 		fmt.Println(sErr)
 	}
 	bytes, err := resp.ToBytes()
 	return fileInfo, bytes, err
+}
 
+func _getMac() *qbox.Mac {
+	return qbox.NewMac(model.Conf.Sync.QiniuSync.AccessKey, model.Conf.Sync.QiniuSync.SecretKey)
 }

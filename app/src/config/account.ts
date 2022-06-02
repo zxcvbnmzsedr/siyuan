@@ -64,6 +64,30 @@ export const account = {
         </h1>
         ${userTitlesHTML}
     </div>
+    <div class="config-qiniu__form" id="qiniu">
+            <label>
+                七牛云同步秘钥设置
+            </label>
+            <div class="b3-form__icon">
+                <svg class="b3-form__icon-icon"><use xlink:href="#iconAccount"></use></svg>
+                <input id="accessKey" class="b3-text-field fn__block b3-form__icon-input" placeholder="accessKey" value=${window.siyuan.config.sync?.qiniuSync?.accessKey}>
+            </div>
+            <div class="b3-form__icon">
+                <svg class="b3-form__icon-icon"><use xlink:href="#iconAccount"></use></svg>
+                <input id="secretKey" class="b3-text-field fn__block b3-form__icon-input" placeholder="secretKey" value=${window.siyuan.config.sync?.qiniuSync?.secretKey}>
+            </div>
+            <div class="b3-form__icon">
+                <svg class="b3-form__icon-icon"><use xlink:href="#iconAccount"></use></svg>
+                <input id="bucket" class="b3-text-field fn__block b3-form__icon-input" placeholder="bucket" value=${window.siyuan.config.sync?.qiniuSync?.bucket}>
+            </div>
+            <div class="b3-form__icon">
+                <svg class="b3-form__icon-icon"><use xlink:href="#iconAccount"></use></svg>
+                <input id="domain" class="b3-text-field fn__block b3-form__icon-input" placeholder="domain" value=${window.siyuan.config.sync?.qiniuSync?.domain}>
+            </div>
+            <div class="fn__hr--b"></div>
+                <button id="qiniu_set" class="b3-button fn__block">设置</button>
+            <div class="fn__hr--b"></div>
+        </div>
     <div class="config-account__info">
         <div class="fn__flex">
             <a class="b3-button b3-button--text" href="https://ld246.com/settings" target="_blank">${window.siyuan.languages.accountManage}</a>
@@ -156,6 +180,7 @@ export const account = {
     bindEvent: () => {
         const agreeLoginElement = account.element.querySelector("#agreeLogin") as HTMLInputElement;
         const userNameElement = account.element.querySelector("#userName") as HTMLInputElement;
+
         if (!userNameElement) {
             const refreshElement = account.element.querySelector("#refresh");
             refreshElement.addEventListener("click", () => {
@@ -196,6 +221,31 @@ export const account = {
                     });
                 });
             });
+
+            const accessKeyElement = account.element.querySelector("#accessKey") as HTMLInputElement;
+            const secretKeyElement = account.element.querySelector("#secretKey") as HTMLInputElement;
+            const bucketElement = account.element.querySelector("#bucket") as HTMLInputElement;
+            const domainElement = account.element.querySelector("#domain") as HTMLInputElement;
+            const qiniuSetBtn = account.element.querySelector("#qiniu_set") as HTMLButtonElement;
+            qiniuSetBtn.addEventListener("click", () => {
+                fetchPost("/api/sync/setQiniuCloudSync", {
+                    bucket: bucketElement.value,
+                    accessKey: accessKeyElement.value,
+                    secretKey: secretKeyElement.value,
+                    domain: domainElement.value,
+                }, (data) => {
+                    hideMessage();
+                    fetchPost("/api/setting/getCloudUser", {
+                        token: data.data.token,
+                    }, response => {
+                        window.siyuan.user = response.data;
+                        account.element.innerHTML = account.genHTML();
+                        account.bindEvent();
+                        account.onSetaccount();
+                    });
+                });
+            });
+
             const activationCodeElement = account.element.querySelector("#activationCode");
             activationCodeElement.addEventListener("click", () => {
                 fetchPost("/api/account/checkActivationcode", {data: (activationCodeElement.previousElementSibling as HTMLInputElement).value}, (response) => {
@@ -208,6 +258,8 @@ export const account = {
                     });
                 });
             });
+
+
             return;
         }
 

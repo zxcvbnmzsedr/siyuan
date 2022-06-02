@@ -244,6 +244,12 @@ declare interface IConfig {
         stat: string
         interval: number
         cloudName: string
+        qiniuSync: {
+            accessKey: string
+            secretKey: string
+            bucket: string
+            domain: string
+        }
     },
     lang: string
     api: {

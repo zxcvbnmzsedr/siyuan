@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"github.com/siyuan-note/siyuan/kernel/conf"
 	"io"
 	"io/fs"
 	"math"
@@ -500,6 +501,17 @@ func SetCloudSyncDir(name string) {
 	defer syncLock.Unlock()
 
 	Conf.Sync.CloudName = name
+	Conf.Save()
+}
+
+func SetQiniuCloudSync(bucket string, accessKey string, secretKey string, domain string) {
+	qiniuSync := conf.QiniuSync{
+		Bucket:    bucket,
+		AccessKey: accessKey,
+		SecretKey: secretKey,
+		Domain:    domain,
+	}
+	Conf.Sync.QiniuSync = qiniuSync
 	Conf.Save()
 }
 

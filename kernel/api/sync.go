@@ -152,3 +152,20 @@ func setCloudSyncDir(c *gin.Context) {
 	name := arg["name"].(string)
 	model.SetCloudSyncDir(name)
 }
+
+func setQiniuCloudSync(c *gin.Context) {
+	ret := gulu.Ret.NewResult()
+	defer c.JSON(http.StatusOK, ret)
+
+	arg, ok := util.JsonArg(c, ret)
+	if !ok {
+		return
+	}
+
+	bucket := arg["bucket"].(string)
+	accessKey := arg["accessKey"].(string)
+	secretKey := arg["secretKey"].(string)
+	domain := arg["domain"].(string)
+
+	model.SetQiniuCloudSync(bucket, accessKey, secretKey, domain)
+}

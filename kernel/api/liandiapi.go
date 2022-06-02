@@ -28,6 +28,11 @@ func getUser(c *gin.Context) {
 	user.UserAvatarURL = "https://assets.b3logfile.com/avatar/1642145846461.png?imageView2/1/w/256/h/256/interlace/0/q/100"
 	user.UserName = "zxcvbnmzsedr"
 
+	user.UserTitles = []*conf.UserTitle{{
+		Name: "zxcvbnmzsedr",
+		Desc: "desc",
+	}}
+
 	data, _ := gulu.JSON.MarshalJSON(user)
 
 	ret.Data = string(data)
