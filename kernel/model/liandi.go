@@ -300,7 +300,7 @@ func getUser(token string) (*conf.User, error) {
 	_, err := request.
 		SetResult(&result).
 		SetBody(map[string]string{"token": token}).
-		Post(util.AliyunServer + "/apis/siyuan/user")
+		Post(util.LocalServer + "/apis/siyuan/user")
 	if nil != err {
 		util.LogErrorf("get community user failed: %s", err)
 		return nil, errors.New(Conf.Language(18))
@@ -316,7 +316,7 @@ func getUser(token string) (*conf.User, error) {
 	}
 
 	dataStr := result["data"].(string)
-	data := util.AESDecrypt(dataStr)
+	data := []byte(dataStr)
 	user := &conf.User{}
 	if err = gulu.JSON.UnmarshalJSON(data, &user); nil != err {
 		util.LogErrorf("get community user failed: %s", err)
@@ -370,18 +370,19 @@ func Login(userName, password, captcha string) (ret *gulu.Result, err error) {
 	_, err = request.
 		SetResult(&result).
 		SetBody(map[string]string{"userName": userName, "userPassword": password, "captcha": captcha}).
-		Post(util.AliyunServer + "/apis/siyuan/login")
+		Post(util.LocalServer + "/apis/siyuan/login")
 	if nil != err {
 		util.LogErrorf("login failed: %s", err)
 		return nil, errors.New(Conf.Language(18))
 	}
+	data := (result["data"]).(map[string]interface{})
 	ret = &gulu.Result{
 		Code: int(result["code"].(float64)),
 		Msg:  result["msg"].(string),
 		Data: map[string]interface{}{
-			"userName":    result["userName"],
-			"token":       result["token"],
-			"needCaptcha": result["needCaptcha"],
+			"userName":    data["userName"],
+			"token":       data["token"],
+			"needCaptcha": data["needCaptcha"],
 		},
 	}
 	if -1 == ret.Code {

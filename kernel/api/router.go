@@ -244,8 +244,11 @@ func ServeAPI(ginServer *gin.Engine) {
 	ginServer.Handle("POST", "/api/bazaar/uninstallBazaarTheme", model.CheckAuth, uninstallBazaarTheme)
 	ginServer.Handle("POST", "/api/bazaar/getBazaarPackageREAME", model.CheckAuth, getBazaarPackageREAME)
 
-	// 重写的接口
+	// 重写上传的接口
 	ginServer.Handle("POST", "/apis/siyuan/data/getSiYuanFileUploadToken", model.CheckAuth, getOssUploadToken)
 	ginServer.Handle("POST", "/apis/siyuan/data/getSiYuanWorkspaceSyncVer", model.CheckAuth, getCloudSyncVer)
 	ginServer.Handle("POST", "/apis/siyuan/data/getSiYuanFileListURL", model.CheckAuth, getCloudFileListOSS)
+	// 重写用户信息的接口，用于伪造
+	ginServer.Handle("POST", "/apis/siyuan/user", model.CheckAuth, getUser)
+	ginServer.Handle("POST", "/apis/siyuan/login", model.CheckAuth, serverLogin)
 }
