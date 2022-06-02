@@ -164,13 +164,51 @@ func getSiYuanWorkspaceSync(c *gin.Context) {
 	ret := gulu.Ret.NewResult()
 	defer c.JSON(http.StatusOK, ret)
 
-	ret.Data = map[string]interface{}{
-		"assetSize":  0,
-		"backupSize": 21551296,
-		"d":          "",
-		"v":          44339,
+	m := make(map[string]interface{})
+	_, data, err := getCloudFileContent("backup", "index.json")
+	backupSize := 0
+	if err = gulu.JSON.UnmarshalJSON(data, &m); nil != err {
+		util.LogErrorf("unmarshal index failed: %s", err)
+		err = errors.New(fmt.Sprintf("unmarshal index failed"))
+	}
+	for _, v := range m {
+		backupSize += int(v.(map[string]interface{})["size"].(float64))
 	}
 
+	_, data, err = getCloudFileContent("sync", model.Conf.Sync.CloudName, ".siyuan", "conf.json")
+
+	if err = gulu.JSON.UnmarshalJSON(data, &m); nil != err {
+		util.LogErrorf("unmarshal index failed: %s", err)
+		err = errors.New(fmt.Sprintf("unmarshal index failed"))
+	}
+
+	ret.Data = map[string]interface{}{
+		"assetSize":  0,
+		"backupSize": backupSize,
+		"d":          m["device"],
+		"v":          m["syncVer"],
+	}
+
+}
+
+func getSiYuanFile(c *gin.Context) {
+	ret := gulu.Ret.NewResult()
+	defer c.JSON(http.StatusOK, ret)
+	arg, ok := util.JsonArg(c, ret)
+	if !ok {
+		return
+	}
+	cloudDirPath := arg["path"].(string)
+
+	uid := model.Conf.User.UserId
+	mac := qbox.NewMac(QiniuAk, QiniuSk)
+	key := path.Join(QiniuBase, uid, cloudDirPath)
+
+	deadline := time.Now().Add(time.Second * 3600).Unix() //1小时有效期
+	downloadURL := storage.MakePrivateURL(mac, QiniuDomain, key, deadline)
+	ret.Data = map[string]interface{}{
+		"url": downloadURL,
+	}
 }
 
 func getCloudFileContent(elem ...string) (storage.FileInfo, []byte, error) {

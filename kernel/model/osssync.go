@@ -251,7 +251,7 @@ func ossDownload0(localDirPath, cloudDirPath, fetch string, fetchedFiles *int, t
 	resp, err := util.NewCloudRequest(Conf.System.NetworkProxy.String()).
 		SetResult(&result).
 		SetBody(map[string]interface{}{"token": Conf.User.UserToken, "path": remoteFileURL}).
-		Post(util.AliyunServer + "/apis/siyuan/data/getSiYuanFile?uid=" + Conf.User.UserId)
+		Post(util.LocalServer + "/apis/siyuan/data/getSiYuanFile?uid=" + Conf.User.UserId)
 	if nil != err {
 		util.LogErrorf("download request [%s] failed: %s", remoteFileURL, err)
 		return errors.New(fmt.Sprintf(Conf.Language(93), err))
