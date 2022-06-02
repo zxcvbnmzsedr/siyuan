@@ -66,6 +66,14 @@ func getCloudSyncVer(c *gin.Context) {
 		util.LogErrorf("download request [%s] failed: %s", downloadURL, err)
 		return
 	}
+	if 404 == resp.StatusCode {
+		util.LogInfof("first upload request [%s] ", downloadURL)
+		ret.Data = map[string]interface{}{
+			"v": -1,
+		}
+		return
+
+	}
 	if 200 != resp.StatusCode {
 		util.LogErrorf("download request [%s] status code [%d]", downloadURL, resp.StatusCode)
 		err = errors.New(fmt.Sprintf("download file list failed [%d]", resp.StatusCode))
