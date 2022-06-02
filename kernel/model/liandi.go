@@ -31,6 +31,23 @@ import (
 
 var ErrFailedToConnectCloudServer = errors.New("failed to connect cloud server")
 
+func StartFreeTrial() (err error) {
+	requestResult := gulu.Ret.NewResult()
+	request := util.NewCloudRequest(Conf.System.NetworkProxy.String())
+	_, err = request.
+		SetResult(requestResult).
+		SetCookies(&http.Cookie{Name: "symphony", Value: Conf.User.UserToken}).
+		Post(util.AliyunServer + "/apis/siyuan/user/startFreeTrial")
+	if nil != err {
+		util.LogErrorf("start free trial failed: %s", err)
+		return ErrFailedToConnectCloudServer
+	}
+	if 0 != requestResult.Code {
+		return errors.New(requestResult.Msg)
+	}
+	return
+}
+
 func DeactivateUser() (err error) {
 	requestResult := gulu.Ret.NewResult()
 	request := util.NewCloudRequest(Conf.System.NetworkProxy.String())
@@ -137,7 +154,7 @@ func AutoRefreshUser() {
 						util.PushErrMsg(Conf.Language(128), 0)
 						return
 					}
-					remains := (expired - time.Now().Add(24*time.Hour*15).UnixMilli()) / 1000 / 60 / 60 / 24
+					remains := (expired - time.Now().Add(24*time.Hour).UnixMilli()) / 1000 / 60 / 60 / 24
 					if 0 <= remains && 15 > remains { // 15 后过期
 						time.Sleep(3 * time.Minute)
 						util.PushErrMsg(fmt.Sprintf(Conf.Language(127), remains), 0)
