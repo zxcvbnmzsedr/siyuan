@@ -42,7 +42,7 @@ func getCloudSpaceOSS() (sync, backup map[string]interface{}, assetSize int64, e
 	resp, err := request.
 		SetResult(&result).
 		SetBody(map[string]string{"token": Conf.User.UserToken}).
-		Post(util.AliyunServer + "/apis/siyuan/data/getSiYuanWorkspace")
+		Post(util.LocalServer + "/apis/siyuan/data/getSiYuanWorkspace")
 	if nil != err {
 		util.LogErrorf("get cloud space failed: %s", err)
 		return nil, nil, 0, ErrFailedToConnectCloudServer
@@ -128,7 +128,7 @@ func listCloudSyncDirOSS() (dirs []map[string]interface{}, size int64, err error
 	resp, err := request.
 		SetBody(map[string]interface{}{"token": Conf.User.UserToken}).
 		SetResult(&result).
-		Post(util.AliyunServer + "/apis/siyuan/data/getSiYuanSyncDirList?uid=" + Conf.User.UserId)
+		Post(util.LocalServer + "/apis/siyuan/data/getSiYuanSyncDirList?uid=" + Conf.User.UserId)
 	if nil != err {
 		util.LogErrorf("get cloud sync dirs failed: %s", err)
 		return nil, 0, ErrFailedToConnectCloudServer
@@ -547,7 +547,7 @@ func getCloudSync(cloudDir string) (assetSize, backupSize int64, device string, 
 	resp, err := request.
 		SetResult(&result).
 		SetBody(map[string]string{"syncDir": cloudDir, "token": Conf.User.UserToken}).
-		Post(util.AliyunServer + "/apis/siyuan/data/getSiYuanWorkspaceSync?uid=" + Conf.User.UserId)
+		Post(util.LocalServer + "/apis/siyuan/data/getSiYuanWorkspaceSync?uid=" + Conf.User.UserId)
 	if nil != err {
 		util.LogErrorf("get cloud sync info failed: %s", err)
 		err = ErrFailedToConnectCloudServer
@@ -631,6 +631,9 @@ func getCloudFileListOSS(cloudDirPath string) (ret map[string]*CloudIndex, err e
 	resp, err = util.NewCloudFileRequest15s(Conf.System.NetworkProxy.String()).Get(downloadURL)
 	if nil != err {
 		util.LogErrorf("download request [%s] failed: %s", downloadURL, err)
+		return
+	}
+	if 404 == resp.StatusCode {
 		return
 	}
 	if 200 != resp.StatusCode {

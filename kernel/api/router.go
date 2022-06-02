@@ -248,6 +248,9 @@ func ServeAPI(ginServer *gin.Engine) {
 	ginServer.Handle("POST", "/apis/siyuan/data/getSiYuanFileUploadToken", model.CheckAuth, getOssUploadToken)
 	ginServer.Handle("POST", "/apis/siyuan/data/getSiYuanWorkspaceSyncVer", model.CheckAuth, getCloudSyncVer)
 	ginServer.Handle("POST", "/apis/siyuan/data/getSiYuanFileListURL", model.CheckAuth, getCloudFileListOSS)
+	ginServer.Handle("POST", "/apis/siyuan/data/getSiYuanWorkspace", model.CheckAuth, getSiYuanWorkspace)
+	ginServer.Handle("POST", "/apis/siyuan/data/getSiYuanSyncDirList", model.CheckAuth, listCloudSyncDirOSS)
+	ginServer.Handle("POST", "/apis/siyuan/data/getSiYuanWorkspaceSync", model.CheckAuth, getSiYuanWorkspaceSync)
 	// 重写用户信息的接口，用于伪造
 	ginServer.Handle("POST", "/apis/siyuan/user", model.CheckAuth, getUser)
 	ginServer.Handle("POST", "/apis/siyuan/login", model.CheckAuth, serverLogin)
