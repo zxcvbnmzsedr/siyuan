@@ -31,6 +31,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/88250/gulu"
 	"github.com/dustin/go-humanize"
@@ -67,6 +68,10 @@ func AutoSync() {
 
 func SyncData(boot, exit, byHand bool) {
 	defer util.Recover()
+
+	if !boot && !exit && 2 == Conf.Sync.Mode && !byHand {
+		return
+	}
 
 	if util.IsMutexLocked(&syncLock) {
 		util.LogWarnf("sync has been locked")
@@ -118,7 +123,7 @@ func SyncData(boot, exit, byHand bool) {
 
 	util.BroadcastByType("main", "syncing", 0, Conf.Language(81), nil)
 	defer func() {
-		synced := util.Millisecond2Time(Conf.Sync.Synced).Format("2006-01-02-15:04:05") + "\n\n" + Conf.Sync.Stat
+		synced := util.Millisecond2Time(Conf.Sync.Synced).Format("2006-01-02 15:04:05") + "\n\n" + Conf.Sync.Stat
 		msg := fmt.Sprintf(Conf.Language(82), synced)
 		Conf.Sync.Stat = msg
 		Conf.Save()
@@ -132,7 +137,7 @@ func SyncData(boot, exit, byHand bool) {
 	writingDataLock.Lock()
 	var err error
 	// 将 data 变更同步到 sync
-	if err = workspaceData2SyncDir(); nil != err {
+	if _, _, err = workspaceData2SyncDir(); nil != err {
 		msg := fmt.Sprintf(Conf.Language(80), formatErrorMsg(err))
 		Conf.Sync.Stat = msg
 		util.PushErrMsg(msg, 7000)
@@ -241,9 +246,9 @@ func SyncData(boot, exit, byHand bool) {
 			return
 		}
 
-		wroteFiles, transferSize, err := ossUpload(localSyncDirPath, "sync/"+Conf.Sync.CloudName, device, boot)
+		wroteFiles, transferSize, err := ossUpload(false, localSyncDirPath, "sync/"+Conf.Sync.CloudName, device, boot)
 		if nil != err {
-			util.PushClearMsg()
+			util.PushClearProgress()
 			IncWorkspaceDataVer() // 上传失败的话提升本地版本，以备下次上传
 
 			msg := fmt.Sprintf(Conf.Language(80), formatErrorMsg(err))
@@ -258,7 +263,7 @@ func SyncData(boot, exit, byHand bool) {
 			return
 		}
 
-		util.PushClearMsg()
+		util.PushClearProgress()
 		elapsed := time.Now().Sub(start).Seconds()
 		stat := fmt.Sprintf(Conf.Language(130), wroteFiles, humanize.Bytes(transferSize)) + fmt.Sprintf(Conf.Language(132), elapsed)
 		util.LogInfof("sync [cloud=%d, local=%d, wroteFiles=%d, transferSize=%s] uploaded in [%.2fs]", cloudSyncVer, syncConf.SyncVer, wroteFiles, humanize.Bytes(transferSize), elapsed)
@@ -283,12 +288,12 @@ func SyncData(boot, exit, byHand bool) {
 	start := time.Now()
 	//util.LogInfof("sync [cloud=%d, local=%d] downloading...", cloudSyncVer, syncConf.SyncVer)
 
-	// 使用索引文件进行解密验证 https://github.com/siyuan-note/siyuan/issues/3789
+	// 使用路径映射文件进行解密验证 https://github.com/siyuan-note/siyuan/issues/3789
 	var tmpFetchedFiles int
 	var tmpTransferSize uint64
 	err = ossDownload0(util.TempDir+"/sync", "sync/"+Conf.Sync.CloudName, "/"+pathJSON, &tmpFetchedFiles, &tmpTransferSize, boot || exit)
 	if nil != err {
-		util.PushClearMsg()
+		util.PushClearProgress()
 		msg := fmt.Sprintf(Conf.Language(80), formatErrorMsg(err))
 		Conf.Sync.Stat = msg
 		util.PushErrMsg(msg, 7000)
@@ -309,7 +314,7 @@ func SyncData(boot, exit, byHand bool) {
 	}
 	data, err = encryption.AESGCMDecryptBinBytes(data, Conf.E2EEPasswd)
 	if nil != err {
-		util.PushClearMsg()
+		util.PushClearProgress()
 		msg := Conf.Language(28)
 		Conf.Sync.Stat = msg
 		util.PushErrMsg(fmt.Sprintf(Conf.Language(80), msg), 7000)
@@ -324,30 +329,21 @@ func SyncData(boot, exit, byHand bool) {
 		return
 	}
 
-	// 解密验证成功后将其移动到 sync/ 文件夹下
-	if err = os.Rename(tmpPathJSON, filepath.Join(localSyncDirPath, pathJSON)); nil != err {
-		util.PushClearMsg()
-		msg := fmt.Sprintf(Conf.Language(80), formatErrorMsg(err))
-		Conf.Sync.Stat = msg
-		util.PushErrMsg(msg, 7000)
-		if boot {
-			BootSyncSucc = 1
-		}
-		if exit {
-			ExitSyncSucc = 1
-		}
-		syncDownloadErrCount++
-		return
-	}
-
 	fetchedFilesCount, transferSize, downloadedFiles, err := ossDownload(localSyncDirPath, "sync/"+Conf.Sync.CloudName, boot || exit)
+
+	// 加上前面的路径映射文件统计
+	fetchedFilesCount += tmpFetchedFiles
+	transferSize += tmpTransferSize
+
 	if nil != err {
-		util.PushClearMsg()
+		util.PushClearProgress()
 		msg := fmt.Sprintf(Conf.Language(80), formatErrorMsg(err))
 		Conf.Sync.Stat = msg
 		util.PushErrMsg(msg, 7000)
 
-		err = syncDirUpsertWorkspaceData(downloadedFiles)
+		metaPath := filepath.Join(Conf.Sync.GetSaveDir(), pathJSON)
+		indexPath := filepath.Join(util.TempDir, "sync", "index.json")
+		_, err = syncDirUpsertWorkspaceData(metaPath, indexPath, downloadedFiles)
 		if nil != err {
 			util.LogErrorf("upsert partially downloaded files to workspace data failed: %s", err)
 		}
@@ -361,7 +357,7 @@ func SyncData(boot, exit, byHand bool) {
 		syncDownloadErrCount++
 		return
 	}
-	util.PushClearMsg()
+	util.PushClearProgress()
 
 	// 恢复
 	var upsertFiles, removeFiles []string
@@ -524,19 +520,28 @@ func SetSyncEnable(b bool) (err error) {
 	return
 }
 
+func SetSyncMode(mode int) (err error) {
+	syncLock.Lock()
+	defer syncLock.Unlock()
+
+	Conf.Sync.Mode = mode
+	Conf.Save()
+	return
+}
+
 var syncLock = sync.Mutex{}
 
-func syncDirUpsertWorkspaceData(downloadedFiles []string) (err error) {
+func syncDirUpsertWorkspaceData(metaPath, indexPath string, downloadedFiles map[string]bool) (upsertFiles []string, err error) {
 	start := time.Now()
 
 	modified := map[string]bool{}
 	syncDir := Conf.Sync.GetSaveDir()
-	for _, file := range downloadedFiles {
+	for file, _ := range downloadedFiles {
 		file = filepath.Join(syncDir, file)
 		modified[file] = true
 	}
 
-	decryptedDataDir, _, err := recoverSyncData(modified)
+	decryptedDataDir, upsertFiles, err := recoverSyncData(metaPath, indexPath, modified)
 	if nil != err {
 		util.LogErrorf("decrypt data dir failed: %s", err)
 		return
@@ -558,13 +563,15 @@ func syncDirUpsertWorkspaceData(downloadedFiles []string) (err error) {
 //   2. 将 sync 中新增/修改的文件解密后拷贝到 data 中
 func syncDir2WorkspaceData(boot bool) (upsertFiles, removeFiles []string, err error) {
 	start := time.Now()
-	unchanged, removeFiles, err := unchangedSyncList()
+	unchanged, removeFiles, err := calcUnchangedSyncList()
 	if nil != err {
 		return
 	}
 
 	modified := modifiedSyncList(unchanged)
-	decryptedDataDir, upsertFiles, err := recoverSyncData(modified)
+	metaPath := filepath.Join(util.TempDir, "sync", pathJSON) // 使用前面解密验证时下载的临时文件
+	indexPath := filepath.Join(Conf.Sync.GetSaveDir(), "index.json")
+	decryptedDataDir, upsertFiles, err := recoverSyncData(metaPath, indexPath, modified)
 	if nil != err {
 		util.LogErrorf("decrypt data dir failed: %s", err)
 		return
@@ -588,17 +595,17 @@ func syncDir2WorkspaceData(boot bool) (upsertFiles, removeFiles []string, err er
 // workspaceData2SyncDir 将 data 的数据更新到 sync 中。
 //   1. 删除 sync 中多余的文件
 //   2. 将 data 中新增/修改的文件加密后拷贝到 sync 中
-func workspaceData2SyncDir() (err error) {
+func workspaceData2SyncDir() (removeList, upsertList map[string]bool, err error) {
 	start := time.Now()
 	filesys.ReleaseAllFileLocks()
 
 	passwd := Conf.E2EEPasswd
-	unchanged, err := unchangedDataList(passwd)
+	unchangedDataList, removeList, err := calcUnchangedDataList(passwd)
 	if nil != err {
 		return
 	}
 
-	encryptedDataDir, err := prepareSyncData(passwd, unchanged)
+	encryptedDataDir, upsertList, err := prepareSyncData(passwd, unchangedDataList)
 	if nil != err {
 		util.LogErrorf("encrypt data dir failed: %s", err)
 		return
@@ -616,12 +623,14 @@ func workspaceData2SyncDir() (err error) {
 }
 
 type CloudIndex struct {
-	Hash string `json:"hash"`
-	Size int64  `json:"size"`
+	Hash    string `json:"hash"`
+	Size    int64  `json:"size"`
+	Updated int64  `json:"updated"` // Unix timestamp 秒
 }
 
-func genCloudIndex(localDirPath string, excludes map[string]bool) (err error) {
-	cloudIndex := map[string]*CloudIndex{}
+// genCloudIndex 生成云端索引文件。
+func genCloudIndex(localDirPath string, excludes map[string]bool, calcHash bool) (cloudIndex map[string]*CloudIndex, err error) {
+	cloudIndex = map[string]*CloudIndex{}
 	err = filepath.Walk(localDirPath, func(path string, info fs.FileInfo, err error) error {
 		if nil != err {
 			return err
@@ -634,15 +643,18 @@ func genCloudIndex(localDirPath string, excludes map[string]bool) (err error) {
 			return nil
 		}
 
-		hash, hashErr := util.GetEtag(path)
-		if nil != hashErr {
-			util.LogErrorf("get file [%s] hash failed: %s", path, hashErr)
-			return hashErr
-		}
-
 		p := strings.TrimPrefix(path, localDirPath)
 		p = filepath.ToSlash(p)
-		cloudIndex[p] = &CloudIndex{Hash: hash, Size: info.Size()}
+		hash := ""
+		if calcHash {
+			var hashErr error
+			hash, hashErr = util.GetEtag(path)
+			if nil != hashErr {
+				err = hashErr
+				return io.EOF
+			}
+		}
+		cloudIndex[p] = &CloudIndex{Hash: hash, Size: info.Size(), Updated: info.ModTime().Unix()}
 		return nil
 	})
 	if nil != err {
@@ -661,7 +673,7 @@ func genCloudIndex(localDirPath string, excludes map[string]bool) (err error) {
 	return
 }
 
-func recoverSyncData(modified map[string]bool) (decryptedDataDir string, upsertFiles []string, err error) {
+func recoverSyncData(metaPath, indexPath string, modified map[string]bool) (decryptedDataDir string, upsertFiles []string, err error) {
 	passwd := Conf.E2EEPasswd
 	decryptedDataDir = filepath.Join(util.WorkspaceDir, "incremental", "sync-decrypt")
 	if err = os.RemoveAll(decryptedDataDir); nil != err {
@@ -672,8 +684,7 @@ func recoverSyncData(modified map[string]bool) (decryptedDataDir string, upsertF
 	}
 
 	syncDir := Conf.Sync.GetSaveDir()
-	meta := filepath.Join(syncDir, pathJSON)
-	data, err := os.ReadFile(meta)
+	data, err := os.ReadFile(metaPath)
 	if nil != err {
 		return
 	}
@@ -688,7 +699,15 @@ func recoverSyncData(modified map[string]bool) (decryptedDataDir string, upsertF
 		return
 	}
 
-	modTimes := map[string]time.Time{}
+	index := map[string]*CloudIndex{}
+	data, err = os.ReadFile(indexPath)
+	if nil != err {
+		return
+	}
+	if err = gulu.JSON.UnmarshalJSON(data, &index); nil != err {
+		return
+	}
+
 	now := time.Now().Format("2006-01-02-150405")
 	filepath.Walk(syncDir, func(path string, info fs.FileInfo, _ error) error {
 		if syncDir == path || pathJSON == info.Name() {
@@ -746,21 +765,25 @@ func recoverSyncData(modified map[string]bool) (decryptedDataDir string, upsertF
 				err = err0
 				return io.EOF
 			}
-		}
 
-		fi, err0 := os.Stat(path)
-		if nil != err0 {
-			util.LogErrorf("stat file [%s] failed: %s", path, err0)
-			err = err0
-			return io.EOF
+			var modTime int64
+			idx := index["/"+encryptedP]
+			if nil == idx {
+				util.LogErrorf("index file [%s] not found", encryptedP)
+				modTime = info.ModTime().Unix()
+			} else {
+				modTime = idx.Updated
+			}
+			if err0 = os.Chtimes(plainP, time.Unix(modTime, 0), time.Unix(modTime, 0)); nil != err0 {
+				util.LogErrorf("change file [%s] time failed: %s", plainP, err0)
+			}
 		}
-		modTimes[plainP] = fi.ModTime()
 		return nil
 	})
 	return
 }
 
-func prepareSyncData(passwd string, unchangedList map[string]bool) (encryptedDataDir string, err error) {
+func prepareSyncData(passwd string, unchangedDataList map[string]bool) (encryptedDataDir string, upsertList map[string]bool, err error) {
 	encryptedDataDir = filepath.Join(util.WorkspaceDir, "incremental", "sync-encrypt")
 	if err = os.RemoveAll(encryptedDataDir); nil != err {
 		return
@@ -770,7 +793,7 @@ func prepareSyncData(passwd string, unchangedList map[string]bool) (encryptedDat
 	}
 
 	ctime := map[string]time.Time{}
-	metaJSON := map[string]string{}
+	meta := map[string]string{}
 	filepath.Walk(util.DataDir, func(path string, info fs.FileInfo, _ error) error {
 		if util.DataDir == path || nil == info {
 			return nil
@@ -788,12 +811,14 @@ func prepareSyncData(passwd string, unchangedList map[string]bool) (encryptedDat
 		p := plainP
 
 		if !strings.HasPrefix(plainP, ".siyuan") { // 配置目录下都用明文，其他文件需要映射文件名
-			p = pathSha246(p, string(os.PathSeparator))
+			p = pathSha256Short(p, string(os.PathSeparator))
 		}
-		metaJSON[filepath.ToSlash(p)] = filepath.ToSlash(plainP)
+		if !isDir {
+			meta[filepath.ToSlash(p)] = filepath.ToSlash(plainP)
+		}
 
 		// 如果不是新增或者修改则跳过
-		if unchangedList[path] {
+		if unchangedDataList[path] {
 			return nil
 		}
 
@@ -802,9 +827,6 @@ func prepareSyncData(passwd string, unchangedList map[string]bool) (encryptedDat
 		if isDir {
 			if err = os.MkdirAll(p, 0755); nil != err {
 				return io.EOF
-			}
-			if fi, err0 := os.Stat(path); nil == err0 {
-				ctime[p] = fi.ModTime()
 			}
 		} else {
 			if err = os.MkdirAll(filepath.Dir(p), 0755); nil != err {
@@ -853,17 +875,22 @@ func prepareSyncData(passwd string, unchangedList map[string]bool) (encryptedDat
 		}
 	}
 
+	upsertList = map[string]bool{}
 	// 检查文件是否全部已经编入索引
 	err = filepath.Walk(encryptedDataDir, func(path string, info fs.FileInfo, _ error) error {
 		if encryptedDataDir == path {
 			return nil
 		}
 
-		path = strings.TrimPrefix(path, encryptedDataDir+string(os.PathSeparator))
-		path = filepath.ToSlash(path)
-		if _, ok := metaJSON[path]; !ok {
-			util.LogErrorf("not found sync path in meta [%s]", path)
-			return errors.New(Conf.Language(27))
+		if !info.IsDir() {
+			path = strings.TrimPrefix(path, encryptedDataDir+string(os.PathSeparator))
+			path = filepath.ToSlash(path)
+			if _, ok := meta[path]; !ok {
+				util.LogErrorf("not found sync path in meta [%s]", path)
+				return errors.New(Conf.Language(27))
+			}
+
+			upsertList["/"+path] = true
 		}
 		return nil
 	})
@@ -871,16 +898,16 @@ func prepareSyncData(passwd string, unchangedList map[string]bool) (encryptedDat
 		return
 	}
 
-	data, err := gulu.JSON.MarshalJSON(metaJSON)
+	data, err := gulu.JSON.MarshalJSON(meta)
 	if nil != err {
 		return
 	}
 	data, err = encryption.AESGCMEncryptBinBytes(data, passwd)
 	if nil != err {
-		return "", errors.New("encrypt file failed")
+		util.LogErrorf("encrypt file failed: %s", err)
+		return
 	}
-	meta := filepath.Join(encryptedDataDir, pathJSON)
-	if err = os.WriteFile(meta, data, 0644); nil != err {
+	if err = os.WriteFile(filepath.Join(encryptedDataDir, pathJSON), data, 0644); nil != err {
 		return
 	}
 	return
@@ -903,8 +930,8 @@ func modifiedSyncList(unchangedList map[string]bool) (ret map[string]bool) {
 	return
 }
 
-// unchangedSyncList 获取 data 和 sync 一致（没有修改过）的文件列表，并删除 data 中不存在于 sync 中的多余文件。
-func unchangedSyncList() (ret map[string]bool, removes []string, err error) {
+// calcUnchangedSyncList 获取 data 和 sync 一致（没有修改过）的文件列表，并删除 data 中不存在于 sync 中的多余文件。
+func calcUnchangedSyncList() (ret map[string]bool, removes []string, err error) {
 	syncDir := Conf.Sync.GetSaveDir()
 	meta := filepath.Join(syncDir, pathJSON)
 	if !gulu.File.IsExist(meta) {
@@ -926,16 +953,7 @@ func unchangedSyncList() (ret map[string]bool, removes []string, err error) {
 		return
 	}
 
-	syncIgnoreList := getSyncIgnoreList()
-	excludes := map[string]bool{}
-	ignores := syncIgnoreList.Values()
-	for _, p := range ignores {
-		relPath := p.(string)
-		relPath = pathSha246(relPath, "/")
-		relPath = filepath.Join(syncDir, relPath)
-		excludes[relPath] = true
-	}
-
+	excludes := getSyncExcludedList(syncDir)
 	ret = map[string]bool{}
 	sep := string(os.PathSeparator)
 	filepath.Walk(util.DataDir, func(path string, info fs.FileInfo, _ error) error {
@@ -952,7 +970,7 @@ func unchangedSyncList() (ret map[string]bool, removes []string, err error) {
 
 		plainP := strings.TrimPrefix(path, util.DataDir+sep)
 		dataP := plainP
-		dataP = pathSha246(dataP, sep)
+		dataP = pathSha256Short(dataP, sep)
 		syncP := filepath.Join(syncDir, dataP)
 
 		if excludes[syncP] {
@@ -989,8 +1007,8 @@ func unchangedSyncList() (ret map[string]bool, removes []string, err error) {
 	return
 }
 
-// unchangedDataList 获取 sync 和 data 一致（没有修改过）的文件列表，并删除 sync 中不存在于 data 中的多余文件。
-func unchangedDataList(passwd string) (ret map[string]bool, err error) {
+// calcUnchangedDataList 计算 sync 和 data 一致（没有修改过）的文件列表 unchangedDataList，并删除 sync 中不存在于 data 中的多余文件 removeList。
+func calcUnchangedDataList(passwd string) (unchangedDataList map[string]bool, removeList map[string]bool, err error) {
 	syncDir := Conf.Sync.GetSaveDir()
 	meta := filepath.Join(syncDir, pathJSON)
 	if !gulu.File.IsExist(meta) {
@@ -1002,7 +1020,8 @@ func unchangedDataList(passwd string) (ret map[string]bool, err error) {
 	}
 	data, err = encryption.AESGCMDecryptBinBytes(data, passwd)
 	if nil != err {
-		return ret, errors.New(Conf.Language(40))
+		err = errors.New(Conf.Language(40))
+		return
 	}
 
 	metaJSON := map[string]string{}
@@ -1010,10 +1029,10 @@ func unchangedDataList(passwd string) (ret map[string]bool, err error) {
 		return
 	}
 
-	ret = map[string]bool{}
-	var removeList []string
+	unchangedDataList = map[string]bool{}
+	removeList = map[string]bool{}
 	filepath.Walk(syncDir, func(path string, info fs.FileInfo, _ error) error {
-		if syncDir == path || pathJSON == info.Name() {
+		if syncDir == path || pathJSON == info.Name() || "index.json" == info.Name() || info.IsDir() {
 			return nil
 		}
 
@@ -1021,7 +1040,7 @@ func unchangedDataList(passwd string) (ret map[string]bool, err error) {
 		encryptedP = filepath.ToSlash(encryptedP)
 		decryptedP := metaJSON[encryptedP]
 		if "" == decryptedP {
-			removeList = append(removeList, path)
+			removeList[path] = true
 			if gulu.File.IsDir(path) {
 				return filepath.SkipDir
 			}
@@ -1030,7 +1049,7 @@ func unchangedDataList(passwd string) (ret map[string]bool, err error) {
 		dataP := filepath.Join(util.DataDir, decryptedP)
 		dataP = filepath.FromSlash(dataP)
 		if !gulu.File.IsExist(dataP) { // data 已经删除的文件
-			removeList = append(removeList, path)
+			removeList[path] = true
 			if gulu.File.IsDir(path) {
 				return filepath.SkipDir
 			}
@@ -1040,22 +1059,28 @@ func unchangedDataList(passwd string) (ret map[string]bool, err error) {
 		stat, _ := os.Stat(dataP)
 		dataModTime := stat.ModTime()
 		if info.ModTime() == dataModTime {
-			ret[dataP] = true
+			unchangedDataList[dataP] = true
 			return nil
 		}
 		return nil
 	})
 
+	tmp := map[string]bool{}
 	// 在 sync 中删除 data 中已经删除的文件
-	for _, remove := range removeList {
+	for remove, _ := range removeList {
 		if strings.HasSuffix(remove, "index.json") {
 			continue
 		}
+
+		p := strings.TrimPrefix(remove, syncDir)
+		p = filepath.ToSlash(p)
+		tmp[p] = true
 
 		if err = os.RemoveAll(remove); nil != err {
 			util.LogErrorf("remove [%s] failed: %s", remove, err)
 		}
 	}
+	removeList = tmp
 	return
 }
 
@@ -1124,6 +1149,8 @@ func CreateCloudSyncDir(name string) (err error) {
 	syncLock.Lock()
 	defer syncLock.Unlock()
 
+	name = strings.TrimSpace(name)
+	name = util.RemoveInvisible(name)
 	if !IsValidCloudDirName(name) {
 		return errors.New(Conf.Language(37))
 	}
@@ -1209,7 +1236,7 @@ func formatErrorMsg(err error) string {
 }
 
 func IsValidCloudDirName(cloudDirName string) bool {
-	if 64 < len(cloudDirName) {
+	if 16 < utf8.RuneCountInString(cloudDirName) {
 		return false
 	}
 
@@ -1223,9 +1250,20 @@ func IsValidCloudDirName(cloudDirName string) bool {
 	if strings.ContainsAny(cloudDirName, charsStr) {
 		return false
 	}
+	return true
+}
 
-	tmp := util.RemoveInvisible(cloudDirName)
-	return tmp == cloudDirName
+func getSyncExcludedList(localDirPath string) (ret map[string]bool) {
+	syncIgnoreList := getSyncIgnoreList()
+	ret = map[string]bool{}
+	ignores := syncIgnoreList.Values()
+	for _, p := range ignores {
+		relPath := p.(string)
+		relPath = pathSha256Short(relPath, "/")
+		relPath = filepath.Join(localDirPath, relPath)
+		ret[relPath] = true
+	}
+	return
 }
 
 func getSyncIgnoreList() (ret *hashset.Set) {
@@ -1286,7 +1324,7 @@ func getSyncIgnoreList() (ret *hashset.Set) {
 	return
 }
 
-func pathSha246(p, sep string) string {
+func pathSha256Short(p, sep string) string {
 	buf := bytes.Buffer{}
 	parts := strings.Split(p, sep)
 	for i, part := range parts {

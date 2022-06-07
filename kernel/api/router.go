@@ -163,6 +163,7 @@ func ServeAPI(ginServer *gin.Engine) {
 	ginServer.Handle("POST", "/api/backup/removeCloudBackup", model.CheckAuth, model.CheckReadonly, removeCloudBackup)
 
 	ginServer.Handle("POST", "/api/sync/setSyncEnable", model.CheckAuth, setSyncEnable)
+	ginServer.Handle("POST", "/api/sync/setSyncMode", model.CheckAuth, setSyncMode)
 	ginServer.Handle("POST", "/api/sync/setCloudSyncDir", model.CheckAuth, setCloudSyncDir)
 
 	ginServer.Handle("POST", "/api/sync/setQiniuCloudSync", model.CheckAuth, setQiniuCloudSync)
@@ -259,4 +260,7 @@ func ServeAPI(ginServer *gin.Engine) {
 	// 重写用户信息的接口，用于伪造
 	ginServer.Handle("POST", "/apis/siyuan/user", model.CheckAuth, getUser)
 	ginServer.Handle("POST", "/apis/siyuan/login", model.CheckAuth, serverLogin)
+
+	ginServer.Handle("POST", "/api/notification/pushMsg", model.CheckAuth, pushMsg)
+	ginServer.Handle("POST", "/api/notification/pushErrMsg", model.CheckAuth, pushErrMsg)
 }

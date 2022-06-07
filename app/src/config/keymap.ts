@@ -1,6 +1,6 @@
 import {hotKey2Electron, isCtrl, isMac, updateHotkeyTip} from "../protyle/util/compatibility";
 import {Constants} from "../constants";
-import {hideMessage, showMessage} from "../dialog/message";
+import {showMessage} from "../dialog/message";
 import {fetchPost} from "../util/fetch";
 import {ipcRenderer} from "electron";
 
@@ -160,7 +160,6 @@ export const keymap = {
             item.addEventListener("keydown", function (event) {
                 event.stopPropagation();
                 event.preventDefault();
-                hideMessage();
                 let keymapStr = "";
                 if (event.ctrlKey && !event.metaKey && isMac()) {
                     keymapStr += "⌃";

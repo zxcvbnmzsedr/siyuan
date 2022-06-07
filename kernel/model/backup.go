@@ -235,7 +235,7 @@ func RecoverLocalBackup() (err error) {
 	if syncEnabled {
 		func() {
 			time.Sleep(5 * time.Second)
-			util.PushMsg(Conf.Language(134), 7000)
+			util.PushMsg(Conf.Language(134), 0)
 		}()
 	}
 	return
@@ -278,7 +278,7 @@ func CreateLocalBackup() (err error) {
 		return
 	}
 
-	err = genCloudIndex(newBackupDir, map[string]bool{})
+	_, err = genCloudIndex(newBackupDir, map[string]bool{}, true)
 	if nil != err {
 		return
 	}
@@ -322,7 +322,7 @@ func CreateLocalBackup() (err error) {
 }
 
 func DownloadBackup() (err error) {
-	// 使用索引文件进行解密验证 https://github.com/siyuan-note/siyuan/issues/3789
+	// 使用路径映射文件进行解密验证 https://github.com/siyuan-note/siyuan/issues/3789
 	var tmpFetchedFiles int
 	var tmpTransferSize uint64
 	err = ossDownload0(util.TempDir+"/backup", "backup", "/"+pathJSON, &tmpFetchedFiles, &tmpTransferSize, false)
@@ -364,7 +364,7 @@ func UploadBackup() (err error) {
 	util.PushEndlessProgress(Conf.Language(61))
 	util.LogInfof("uploading backup...")
 	start := time.Now()
-	wroteFiles, transferSize, err := ossUpload(localDirPath, "backup", "", false)
+	wroteFiles, transferSize, err := ossUpload(true, localDirPath, "backup", "not exist", false)
 	if nil == err {
 		elapsed := time.Now().Sub(start).Seconds()
 		util.LogInfof("uploaded backup [wroteFiles=%d, transferSize=%s] in [%.2fs]", wroteFiles, humanize.Bytes(transferSize), elapsed)
@@ -517,7 +517,7 @@ func decryptDataDir(passwd string) (decryptedDataDir string, err error) {
 	}
 
 	backupDir := Conf.Backup.GetSaveDir()
-	meta := filepath.Join(backupDir, pathJSON)
+	meta := filepath.Join(util.TempDir, "backup", pathJSON)
 	data, err := os.ReadFile(meta)
 	if nil != err {
 		return
@@ -526,13 +526,20 @@ func decryptDataDir(passwd string) (decryptedDataDir string, err error) {
 	if nil != err {
 		return "", errors.New(Conf.Language(40))
 	}
-
 	metaJSON := map[string]string{}
 	if err = gulu.JSON.UnmarshalJSON(data, &metaJSON); nil != err {
 		return
 	}
 
-	modTimes := map[string]time.Time{}
+	index := map[string]*CloudIndex{}
+	data, err = os.ReadFile(filepath.Join(backupDir, "index.json"))
+	if nil != err {
+		return
+	}
+	if err = gulu.JSON.UnmarshalJSON(data, &index); nil != err {
+		return
+	}
+
 	err = filepath.Walk(backupDir, func(path string, info fs.FileInfo, _ error) error {
 		if backupDir == path || pathJSON == info.Name() || strings.HasSuffix(info.Name(), ".json") {
 			return nil
@@ -540,7 +547,14 @@ func decryptDataDir(passwd string) (decryptedDataDir string, err error) {
 
 		encryptedP := strings.TrimPrefix(path, backupDir+string(os.PathSeparator))
 		encryptedP = filepath.ToSlash(encryptedP)
-		plainP := filepath.Join(decryptedDataDir, metaJSON[encryptedP])
+		decryptedP := metaJSON[encryptedP]
+		if "" == decryptedP {
+			if gulu.File.IsDir(path) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		plainP := filepath.Join(decryptedDataDir, decryptedP)
 		plainP = filepath.FromSlash(plainP)
 
 		if info.IsDir() {
@@ -570,22 +584,20 @@ func decryptDataDir(passwd string) (decryptedDataDir string, err error) {
 				err = err0
 				return io.EOF
 			}
-		}
 
-		fi, err0 := os.Stat(path)
-		if nil != err0 {
-			util.LogErrorf("stat file [%s] failed: %s", path, err0)
-			err = err0
-			return io.EOF
+			var modTime int64
+			idx := index["/"+encryptedP]
+			if nil == idx {
+				util.LogErrorf("index file [%s] not found", encryptedP)
+				modTime = info.ModTime().Unix()
+			} else {
+				modTime = idx.Updated
+			}
+			if err0 = os.Chtimes(plainP, time.Unix(modTime, 0), time.Unix(modTime, 0)); nil != err0 {
+				util.LogErrorf("change file [%s] time failed: %s", plainP, err0)
+			}
 		}
-		modTimes[plainP] = fi.ModTime()
 		return nil
 	})
-
-	for plainP, modTime := range modTimes {
-		if err = os.Chtimes(plainP, modTime, modTime); nil != err {
-			return
-		}
-	}
 	return
 }
